@@ -1,6 +1,12 @@
 name: Basic ACME
 
-on: workflow_call
+on:
+  workflow_call:
+    inputs:
+      caa:
+        description: Exercise optional CAA adapters through real enrollment
+        type: boolean
+        default: false
 
 env:
   # use DS container image by default to create DS with BDB
@@ -351,12 +357,14 @@ jobs:
 
           # TODO: review permissions
           cat > expected_old << EOF
+          -rw-rw---- pkiuser pkiuser caa.conf
           -rw-rw---- pkiuser pkiuser database.conf
           -rw-rw---- pkiuser pkiuser issuer.conf
           -rw-rw---- pkiuser pkiuser realm.conf
           EOF
 
           cat > expected_new << EOF
+          -rw-rw---- pkiuser pkiuser caa.conf
           -rw-rw---- pkiuser pkiuser database.conf
           -rw-rw---- pkiuser pkiuser issuer.conf
           -rw-rw---- pkiuser pkiuser realm.conf
@@ -994,6 +1002,44 @@ jobs:
           EOF
 
           diff expected_$TOMCAT_FLAVOR output
+
+      - name: Retrieve optional CAA test adapters
+        if: inputs.caa
+        uses: actions/download-artifact@v8
+        with:
+          name: acme-caa-runtime
+          path: acme-caa-runtime
+
+      - name: Install optional adapters and enrollment test tools
+        if: inputs.caa
+        # These are test-only artifacts. Default RPM builds still omit the adapters.
+        run: |
+          docker exec pki dnf install -y certbot python3-cryptography dnsmasq bind bind-utils bind-dnssec-utils unbound unbound-libs
+          docker exec pki install -m 644 "$SHARED/acme-caa-runtime/pki-acme-dnsjava.jar" /usr/share/java/pki/
+          docker exec pki install -m 644 "$SHARED/acme-caa-runtime/pki-acme-libunbound.jar" /usr/share/java/pki/
+          docker exec pki install -m 644 "$SHARED/acme-caa-runtime/dnsjava.jar" /usr/share/java/dnsjava.jar
+          docker exec pki install -m 755 "$SHARED/acme-caa-runtime/libpki_acme_unbound.so" /usr/lib64/libpki_acme_unbound.so
+          docker exec pki ln -sf /usr/share/java/pki/pki-acme-dnsjava.jar /usr/share/pki/acme/webapps/acme/WEB-INF/lib/pki-acme-dnsjava.jar
+          docker exec pki ln -sf /usr/share/java/pki/pki-acme-libunbound.jar /usr/share/pki/acme/webapps/acme/WEB-INF/lib/pki-acme-libunbound.jar
+          docker exec pki ln -sf /usr/share/java/dnsjava.jar /usr/share/pki/acme/webapps/acme/WEB-INF/lib/dnsjava.jar
+
+      - name: Exercise CAA, DNSSEC and configuration upgrades through ACME
+        if: inputs.caa
+        run: |
+          for provider in dnsjava libunbound; do
+            docker exec pki bash "$SHARED/tests/caa-plugin/enrollment/test-enrollment.sh" \
+              --caa --provider "$provider" --upgrade-check --log "$SHARED/acme-caa-enrollment.log"
+            docker exec pki bash "$SHARED/tests/caa-plugin/enrollment/test-enrollment.sh" \
+              --dnssec --provider "$provider" --log "$SHARED/acme-caa-enrollment.log"
+          done
+
+      - name: Preserve CAA enrollment summary
+        if: always() && inputs.caa
+        uses: actions/upload-artifact@v7
+        with:
+          name: acme-caa-enrollment
+          path: acme-caa-enrollment.log
+          if-no-files-found: warn
 
       - name: Check DS server systemd journal
         if: always()

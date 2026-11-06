@@ -52,6 +52,8 @@ DIST=
 
 WITH_JAVA=true
 WITH_CONSOLE=
+WITH_ACME_DNSJAVA=false
+WITH_ACME_LIBUNBOUND=false
 RUN_TESTS=true
 
 WITH_APIV1=true
@@ -96,6 +98,8 @@ usage() {
     echo "    --dist=<name>                Distribution name (e.g. fc28)."
     echo "    --without-java               Do not build Java binaries."
     echo "    --with-console               Build console package."
+    echo "    --with-acme-libunbound       Build the optional ACME libunbound CAA adapter."
+    echo "    --with-acme-dnsjava          Build the optional ACME dnsjava CAA adapter."
     echo "    --with-pkgs=<list>           Build packages specified in comma-separated list only."
     echo "    --without-pkgs=<list>        Build everything except packages specified in comma-separated list."
     echo "    --without-test               Do not run unit tests."
@@ -293,6 +297,14 @@ generate_rpm_spec() {
         sed -i "s/%bcond_with *console\$/%bcond_without console/g" "$SPEC_FILE"
     fi
 
+    if [ "$WITH_ACME_DNSJAVA" = true ] ; then
+        sed -i "s/%bcond_with *acme_dnsjava\$/%bcond_without acme_dnsjava/g" "$SPEC_FILE"
+    fi
+
+    if [ "$WITH_ACME_LIBUNBOUND" = true ] ; then
+        sed -i "s/%bcond_with *acme_libunbound\$/%bcond_without acme_libunbound/g" "$SPEC_FILE"
+    fi
+
     # hard-code packages to build
     for package in "${PKGS_TO_SKIP[@]}"
     do
@@ -402,6 +414,12 @@ while getopts v-: arg ; do
             ;;
         with-console)
             WITH_CONSOLE=true
+            ;;
+        with-acme-libunbound)
+            WITH_ACME_LIBUNBOUND=true
+            ;;
+        with-acme-dnsjava)
+            WITH_ACME_DNSJAVA=true
             ;;
         with-pkgs=?*)
             if [ "$WITHOUT_PKGS" != "" ]; then
@@ -779,6 +797,10 @@ if [ "$BUILD_TARGET" = "dist" ] ; then
     if [ "$WITH_CONSOLE" = true ] ; then
         OPTIONS+=(-DWITH_CONSOLE:BOOL=ON)
     fi
+
+    # Reset the cached selection too when reusing a previously enabled build.
+    OPTIONS+=(-DWITH_ACME_DNSJAVA:BOOL=$WITH_ACME_DNSJAVA)
+    OPTIONS+=(-DWITH_ACME_LIBUNBOUND:BOOL=$WITH_ACME_LIBUNBOUND)
 
     if [ "$RUN_TESTS" = false ] ; then
         OPTIONS+=(-DRUN_TESTS:BOOL=OFF)

@@ -164,6 +164,7 @@ public class ACMEOrderServlet extends ACMEServlet {
         PKCS10 pkcs10 = new PKCS10(csrBytes);
 
         engine.validateCSR(account, order, pkcs10);
+        engine.validateCAA(account, order, pkcs10);
 
         ACMEIssuer issuer = engine.getIssuer();
         String certID = issuer.issueCertificate(pkcs10);

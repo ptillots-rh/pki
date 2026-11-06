@@ -1,0 +1,99 @@
+name: ACME CAA Tests
+
+on: [workflow_call, workflow_dispatch]
+
+permissions:
+  contents: read
+
+jobs:
+  caa-unit:
+    name: CAA and DNS plugins (Java ${{ matrix.java }})
+    # Disabled until the approved dnsjava artifact is available to runners.
+    if: ${{ false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ['17', '21']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+          cache-dependency-path: tests/caa-plugin/**/pom.xml
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc pkg-config libunbound-dev
+      - name: Test ACME CAA configuration migration
+        run: python3 -m unittest discover -s tests/caa-plugin/upgrade -v
+      - name: Test enrollment harness restoration and error checks
+        run: python3 -m unittest discover -s tests/caa-plugin/enrollment -p 'test_*.py' -v
+      - name: Build JNI and test core with both optional plugins
+        run: |
+          sh tests/caa-plugin/libunbound/build-native.sh
+          mvn -B -ntp -f tests/caa-plugin/pom.xml -Pdnsjava,libunbound,operational test
+          python3 tests/caa-plugin/check-reports.py unit
+          python3 tests/caa-plugin/check-reports.py operational
+      - name: Preserve test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: acme-caa-unit-java-${{ matrix.java }}
+          path: tests/caa-plugin/*/target/surefire-reports/
+          if-no-files-found: warn
+
+  caa-dnssec:
+    name: CAA with private DNSSEC hierarchy
+    if: ${{ false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+          cache-dependency-path: tests/caa-plugin/**/pom.xml
+      - name: Install native build and private DNS server dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc pkg-config libunbound-dev bind9 bind9-utils unbound apparmor-utils
+      - name: Permit fixture files in the DNS daemons' AppArmor profiles
+        # Keep confinement enabled. These job-local daemons need access to generated
+        # zones, keys and logs under the checkout rather than system DNS directories.
+        run: |
+          for daemon in named unbound; do
+            profile="/etc/apparmor.d/usr.sbin.$daemon"
+            if [ -f "$profile" ] && sudo aa-status --enabled; then
+              printf '"%s/tests/caa-plugin/dnssec/target/fixtures/" r,\n"%s/tests/caa-plugin/dnssec/target/fixtures/**" rwk,\n' \
+                "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE" | \
+                sudo tee -a "/etc/apparmor.d/local/usr.sbin.$daemon"
+              sudo apparmor_parser -r "$profile"
+            fi
+          done
+      - name: Record DNS implementation versions
+        run: |
+          pkg-config --modversion libunbound
+          named -v
+          unbound -V
+      - name: Test both enforcing plugins against signed fixture zones
+        run: |
+          sh tests/caa-plugin/libunbound/build-native.sh
+          mvn -B -ntp -f tests/caa-plugin/pom.xml \
+            -Pdnsjava,libunbound,dnssec-integration \
+            -Dtest=CAADNSSECIntegrationTest -Dsurefire.failIfNoSpecifiedTests=false test
+          python3 tests/caa-plugin/check-reports.py dnssec
+      - name: Preserve DNSSEC reports and DNS server logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: acme-caa-dnssec
+          path: |
+            tests/caa-plugin/dnssec/target/surefire-reports/
+            tests/caa-plugin/dnssec/target/fixtures/*/*.log
+          if-no-files-found: warn

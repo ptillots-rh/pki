@@ -102,6 +102,7 @@ public class ACMEEngine extends CMSEngine {
 
     private ACMEIssuerConfig issuerConfig;
     private ACMEIssuer issuer;
+    private ACMECAAValidator caaValidator;
 
     private ACMEScheduler scheduler;
 
@@ -489,6 +490,7 @@ public class ACMEEngine extends CMSEngine {
         initScheduler(acmeConfDir + File.separator + "scheduler.conf");
         initMonitors(acmeConfDir + File.separator + "configsources.conf");
         initRealm(acmeConfDir + File.separator + "realm.conf");
+        initCAA(acmeConfDir + File.separator + "caa.conf");
 
         logger.info("ACME engine started");
     }
@@ -545,6 +547,8 @@ public class ACMEEngine extends CMSEngine {
 
         logger.info("Stopping ACME engine");
 
+        shutdownCAA();
+
         shutdownRealm();
         shutdownMonitors();
         shutdownScheduler();
@@ -553,6 +557,22 @@ public class ACMEEngine extends CMSEngine {
         shutdownDatabase();
 
         logger.info("ACME engine stopped");
+    }
+
+    public void initCAA(String filename) throws Exception {
+        if (caaValidator != null) throw new IllegalStateException("ACME CAA validator is already initialized");
+        caaValidator = new ACMECAAValidator(this, filename);
+    }
+
+    public void shutdownCAA() {
+        // Retain the closed validator so late requests cannot bypass enforcement.
+        if (caaValidator != null) caaValidator.close();
+    }
+
+    /** Checks CAA after CSR validation and before the servlet invokes the issuer. */
+    public void validateCAA(ACMEAccount account, ACMEOrder order, PKCS10 pkcs10) throws Exception {
+        if (caaValidator == null) throw new IllegalStateException("ACME CAA validator is not initialized");
+        caaValidator.validate(account, order, pkcs10);
     }
 
     public String randomAlphanumeric(int length) {

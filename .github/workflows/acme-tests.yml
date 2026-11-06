@@ -8,6 +8,12 @@ env:
   COPR_REPO: ${{ vars.COPR_REPO }}
 
 jobs:
+  # Disabled until the approved dnsjava artifact is available to runners.
+  acme-caa-test:
+    name: CAA and DNSSEC
+    if: ${{ false }}
+    uses: ./.github/workflows/acme-caa-test.yml
+
   build:
     name: Building ACME images
     runs-on: ubuntu-latest
@@ -76,6 +82,68 @@ jobs:
           cache-from: type=local,src=/tmp/.buildx-cache
           outputs: type=docker
 
+      - name: Load PKI builder for ACME engine tests
+        if: ${{ false }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          build-args: |
+            BASE_IMAGE=${{ env.BASE_IMAGE }}
+            COPR_REPO=${{ env.COPR_REPO }}
+            BUILD_OPTS=--with-pkgs=base,server,ca,acme --without-test
+          tags: pki-acme-builder
+          target: pki-builder
+          cache-from: type=local,src=/tmp/.buildx-cache
+          outputs: type=docker
+
+      - name: Test actual ACME engine CAA approval path
+        if: ${{ false }}
+        run: |
+          docker run --name acme-caa-engine --entrypoint /bin/bash pki-acme-builder -lc '
+            set -e
+            cd /root/pki
+            dnf install -y gcc pkgconf-pkg-config unbound-devel
+            mvn -B -ntp -f pom.xml -Pacme-dnsjava,acme-libunbound \
+              -pl base/acme/caa-plugins/dnsjava,base/acme/caa-plugins/libunbound -am -Dapi.v1=true \
+              -Dtest=ACMEEngineCAATest -Dsurefire.failIfNoSpecifiedTests=false package
+            sh tests/caa-plugin/libunbound/build-native.sh
+            python3 tests/caa-plugin/check-reports.py engine
+          '
+
+      - name: Collect optional adapters for enrollment tests
+        if: ${{ false }}
+        run: |
+          mkdir -p acme-caa-runtime
+          docker cp acme-caa-engine:/root/pki/base/acme/caa-plugins/dnsjava/target/pki-acme-dnsjava.jar acme-caa-runtime/
+          docker cp acme-caa-engine:/root/pki/base/acme/caa-plugins/libunbound/target/pki-acme-libunbound.jar acme-caa-runtime/
+          docker cp acme-caa-engine:/root/pki/tests/caa-plugin/libunbound/target/native/libpki_acme_unbound.so acme-caa-runtime/
+          docker cp acme-caa-engine:/root/.m2/repository/dnsjava/dnsjava/3.6.5/dnsjava-3.6.5.jar acme-caa-runtime/dnsjava.jar
+
+      - name: Store optional enrollment test adapters
+        if: ${{ false }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: acme-caa-runtime
+          path: acme-caa-runtime/
+          if-no-files-found: error
+
+      - name: Collect ACME engine test reports
+        if: ${{ false }}
+        run: |
+          mkdir -p acme-caa-engine-reports
+          if docker container inspect acme-caa-engine > /dev/null 2>&1; then
+            docker cp acme-caa-engine:/root/pki/base/acme/target/surefire-reports/. \
+              acme-caa-engine-reports/ || true
+          fi
+
+      - name: Preserve ACME engine test reports
+        if: ${{ false }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: acme-caa-engine
+          path: acme-caa-engine-reports/
+          if-no-files-found: warn
+
       - name: Build pki-ca image
         uses: docker/build-push-action@v7
         with:
@@ -122,6 +190,14 @@ jobs:
     name: ACME with Caddy
     needs: build
     uses: ./.github/workflows/acme-caddy-test.yml
+
+  acme-caa-enrollment-test:
+    name: ACME CAA enrollment and DNSSEC
+    if: ${{ false }}
+    needs: build
+    uses: ./.github/workflows/acme-basic-test.yml
+    with:
+      caa: true
 
   acme-separate-test:
     name: ACME on separate instance

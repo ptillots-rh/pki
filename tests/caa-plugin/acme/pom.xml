@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.dogtagpki.tests</groupId>
+        <artifactId>caa-tests</artifactId>
+        <version>1.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>caa-acme</artifactId>
+    <!-- Review the actual ACME CAA sources without building PKI RPMs. -->
+    <build>
+        <sourceDirectory>${project.basedir}/../../../base/acme/src/main/java</sourceDirectory>
+        <plugins>
+            <!-- Keep shared fixtures in the test tree and out of the main JAR.
+                 Attach before test so the optional reactor module can use them. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>shared-test-fixtures</id>
+                        <phase>process-test-classes</phase>
+                        <goals><goal>test-jar</goal></goals>
+                        <configuration>
+                            <includes>
+                                <include>org/dogtagpki/acme/caa/TestCAALookupBudget*.class</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <includes><include>org/dogtagpki/acme/caa/**/*.java</include></includes>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
