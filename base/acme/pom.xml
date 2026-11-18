@@ -24,6 +24,36 @@
 
     </dependencies>
 
+    <!-- Export only shared fixture helpers, separately from the runtime JAR. -->
+    <profiles>
+        <profile>
+            <id>acme-dnsjava</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-jar-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>caa-test-fixtures</id>
+                                <phase>process-test-classes</phase>
+                                <goals>
+                                    <goal>test-jar</goal>
+                                </goals>
+                                <configuration>
+                                    <includes>
+                                        <include>org/dogtagpki/acme/caa/TestCAALookupBudget*.class</include>
+                                        <include>org/dogtagpki/acme/caa/TestCAAIssuance*.class</include>
+                                    </includes>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+
     <build>
         <plugins>
             <plugin>

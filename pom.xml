@@ -19,6 +19,15 @@
         <module>base</module>
     </modules>
 
+    <profiles>
+        <profile>
+            <id>acme-caa-tests</id>
+            <modules>
+                <module>tests/caa-plugin</module>
+            </modules>
+        </profile>
+    </profiles>
+
     <dependencies>
 
         <dependency>

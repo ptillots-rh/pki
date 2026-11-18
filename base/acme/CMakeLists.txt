@@ -149,3 +149,6 @@ install(
     DESTINATION
         ${DATA_INSTALL_DIR}/acme/webapps/acme/WEB-INF/lib
 )
+
+# Optional CAA adapters are separate artifacts owned by the ACME subtree.
+add_subdirectory(caa-plugins)

@@ -33,6 +33,13 @@
     </modules>
 
     <profiles>
+        <!-- The DNS library is needed only when the adapter is explicitly selected. -->
+        <profile>
+            <id>acme-dnsjava</id>
+            <modules>
+                <module>acme/caa-plugins/dnsjava</module>
+            </modules>
+        </profile>
         <!-- Profile to drop v1 API completely (no compilation) -->
         <profile>
             <id>api-v1-dropped</id>

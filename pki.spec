@@ -166,6 +166,12 @@ ExcludeArch: i686
 # Don't build console unless --with console is specified.
 %bcond_with console
 
+# Build the optional ACME DNS adapter only with approved dnsjava build inputs.
+%bcond_with acme_dnsjava
+%if %{with acme_dnsjava} && ! %{with acme}
+%{error:acme_dnsjava requires the acme package}
+%endif
+
 %if ! %{with debug}
 %define debug_package %{nil}
 %endif
@@ -244,6 +250,10 @@ BuildRequires:    tomcat-jakartaee-migration
 %endif
 
 BuildRequires:    %{vendor_id}-jss >= 6.0
+
+%if %{with acme_dnsjava}
+BuildRequires:    mvn(dnsjava:dnsjava) >= 3.7.1
+%endif
 
 BuildRequires:    mvn(xml-apis:xml-apis)
 BuildRequires:    mvn(xml-resolver:xml-resolver)
@@ -787,6 +797,9 @@ Obsoletes:        pki-acme < %{version}-%{release}
 Provides:         pki-acme = %{version}-%{release}
 
 Requires:         %{product_id}-server = %{version}-%{release}
+%if %{with acme_dnsjava}
+Requires:         mvn(dnsjava:dnsjava) >= 3.7.1
+%endif
 
 %description -n   %{product_id}-acme
 %{product_name} ACME responder is a service that provides an automatic certificate
@@ -1534,6 +1547,9 @@ fi
 %mvn_file org.dogtagpki.pki:pki-tks               pki/pki-tks
 %mvn_file org.dogtagpki.pki:pki-tps               pki/pki-tps
 %mvn_file org.dogtagpki.pki:pki-acme              pki/pki-acme
+%if %{with acme_dnsjava}
+%mvn_file org.dogtagpki.pki:pki-acme-dnsjava      pki/pki-acme-dnsjava
+%endif
 %mvn_file org.dogtagpki.pki:pki-est               pki/pki-est
 
 %if %{with console}
@@ -1559,7 +1575,14 @@ fi
 %mvn_package org.dogtagpki.pki:pki-ocsp           pki-ocsp
 %mvn_package org.dogtagpki.pki:pki-tks            pki-tks
 %mvn_package org.dogtagpki.pki:pki-tps            pki-tps
+# Shared test fixtures are reactor-only inputs, never product runtime artifacts.
+%if %{with acme_dnsjava}
+%mvn_package org.dogtagpki.pki:pki-acme:jar:tests __noinstall
+%endif
 %mvn_package org.dogtagpki.pki:pki-acme           pki-acme
+%if %{with acme_dnsjava}
+%mvn_package org.dogtagpki.pki:pki-acme-dnsjava   pki-acme
+%endif
 %mvn_package org.dogtagpki.pki:pki-est            pki-est
 
 %if %{with console}
@@ -1590,7 +1613,7 @@ export JAVA_HOME=%{java_home}
 %if %{with xmvn}
 # build Java binaries and run unit tests with XMvn
 
-%mvn_build %{!?with_test:-f} -j -- -Dapi.v1=%{?with_apiv1:true}%{!?with_apiv1:false}
+%mvn_build %{!?with_test:-f} -j -- %{?with_acme_dnsjava:-Pacme-dnsjava} -Dapi.v1=%{?with_apiv1:true}%{!?with_apiv1:false}
 
 # create links to XMvn-built JAR files for CMake
 mkdir -p %{_vpath_builddir}/dist
@@ -1636,6 +1659,9 @@ ln -sf ../../base/tps/target/pki-tps.jar
 
 %if %{with acme}
 ln -sf ../../base/acme/target/pki-acme.jar
+%if %{with acme_dnsjava}
+ln -sf ../../base/acme/caa-plugins/dnsjava/target/pki-acme-dnsjava.jar
+%endif
 %endif
 
 %if %{with est}
@@ -1695,6 +1721,7 @@ pkgs=base\
     %{?with_xmvn:--without-java} \
     --with-pkgs=$pkgs \
     %{?with_console:--with-console} \
+    %{?with_acme_dnsjava:--with-acme-dnsjava} \
     --without-test \
     %{!?with_apiv1:--without-apiv1} \
     dist
@@ -2354,6 +2381,9 @@ fi
 
 %if %{without xmvn}
 %{_javadir}/pki/pki-acme.jar
+%if %{with acme_dnsjava}
+%{_javadir}/pki/pki-acme-dnsjava.jar
+%endif
 %endif
 
 # with acme
