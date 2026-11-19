@@ -6,6 +6,7 @@
 package org.dogtagpki.acme.server;
 
 import java.io.PrintWriter;
+import java.net.URI;
 import java.util.Date;
 import java.util.stream.Collectors;
 
@@ -64,9 +65,9 @@ public class ACMENewAccountServlet extends ACMEServlet {
 
         String payload = new String(jws.getPayloadAsBytes(), "UTF-8");
         logger.info("Payload: " + payload);
-        URIBuilder accountURL = new URIBuilder(request.getRequestURL().toString());
-        accountURL.removeQuery();
-        accountURL.setPath(request.getContextPath() + "/acct/" + accountID);
+        // Publish the same account identifier that issuance-time binding uses.
+        URIBuilder accountURL = new URIBuilder(engine.getAccountURI(
+                new URI(request.getRequestURL().toString()), accountID));
         response.setHeader("Location", accountURL.build().toString());
 
         ACMEAccount account = engine.getAccount(accountID, false);

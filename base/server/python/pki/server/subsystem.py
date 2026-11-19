@@ -3484,6 +3484,10 @@ class ACMESubsystem(PKISubsystem):
         return os.path.join(self.conf_dir, 'issuer.conf')
 
     @property
+    def caa_conf(self):
+        return os.path.join(self.conf_dir, 'caa.conf')
+
+    @property
     def realm_conf(self):
         return os.path.join(self.conf_dir, 'realm.conf')
 
@@ -3521,6 +3525,16 @@ class ACMESubsystem(PKISubsystem):
         self.instance.copy(
             os.path.join(default_conf_dir, 'issuer.conf'),
             self.issuer_conf,
+            exist_ok=exist_ok,
+            force=force)
+
+        # Install caa.conf with the same instance copy policy as the other
+        # ACME configuration files. Its shipped enabled=false preserves
+        # ordinary enrollment without requiring the optional DNS adapter.
+        # Existing-instance migration is handled by AddACMECAAConfig.
+        self.instance.copy(
+            os.path.join(default_conf_dir, 'caa.conf'),
+            self.caa_conf,
             exist_ok=exist_ok,
             force=force)
 

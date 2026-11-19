@@ -22,6 +22,11 @@ Scenarios:
 - insecure: omit the child DS to establish an insecure delegation.
 - alias-negative: original-parent policy grants; alias-target-parent policy denies.
 
+The installed enrollment harness invokes this generator for its --caa tests.
+Every scenario uses validating Unbound, including authenticated insecurity and
+bogus data that must be rejected. --additional-domain adds CAA records for a
+multi-name request; --denied-domain denies just one of those names.
+
 The Java outage test generates secure-allow data, then stops the DNS fixture
 before attempting issuance. Its scenario name is not passed to this script.
 
@@ -55,10 +60,14 @@ def zone_text(zone, body):
             '@ IN NS ns.example.com.\n' + body)
 
 
-def prepare(directory, domain, scenario):
+def prepare(directory, domain, scenario, additional_domains=(), denied_domain=None):
     """Generate the selected hierarchy and daemon configuration in one directory."""
-    if not re.fullmatch(r'[a-z0-9-]+\.example\.com', domain):
-        raise ValueError('DNSSEC fixture requires a single label under example.com')
+    names = list(dict.fromkeys([domain, *additional_domains]))
+    for name in names:
+        if not re.fullmatch(r'[a-z0-9-]+\.example\.com', name):
+            raise ValueError('DNSSEC fixture requires single-label names under example.com')
+    if denied_domain is not None and (scenario != 'secure-allow' or denied_domain not in names):
+        raise ValueError('A per-name denial requires secure-allow and a requested name')
 
     # Build root -> com -> example.com. Only the insecure scenario omits
     # the child DS; the bogus scenario corrupts child CAA after signing.
@@ -109,7 +118,19 @@ def prepare(directory, domain, scenario):
                  'branch IN CAA 0 issue "other-ca.example.com"\n'
                  '@ IN CAA 0 issue "ca.example.com"\n')
     else:
-        body += f'{domain}. IN CAA 0 issue "{issuer}"\n'
+        primary_issuer = 'other-ca.example.com' if denied_domain == domain else issuer
+        body += f'{domain}. IN CAA 0 issue "{primary_issuer}"\n'
+    # Additional SANs receive their own grants in the same zone. Override only the
+    # selected identity so enrollment can prove that one denied SAN blocks
+    # the complete order even when the other names are allowed.
+    for name in names:
+        if name == domain:
+            continue
+        if name == denied_domain:
+            body += f'{name}. IN CAA 0 issue "other-ca.example.com"\n'
+        else:
+            body += f'{name}. IN CAA 0 issue "{issuer}"\n'
+
     if scenario == 'insecure':
         child = directory / 'example.unsigned'
         child.write_text(zone_text('example.com.', body))
@@ -118,8 +139,10 @@ def prepare(directory, domain, scenario):
     if scenario == 'bogus':
         # Change signed RDATA after signing. DNSKEY and DS links remain valid.
         text = child.read_text()
-        if text.count('"other-ca.example.com"') != 1:
-            raise ValueError('Expected exactly one signed CAA property to corrupt')
+        # Every requested name has one signed deny grant. Corrupt each one
+        # so every name exercises DNSSEC validation failure.
+        if text.count('"other-ca.example.com"') != len(names):
+            raise ValueError('Expected one signed CAA property per requested name to corrupt')
         child.write_text(text.replace('"other-ca.example.com"', '"ca.example.com"'))
 
     # Trust only this run's private root. Forward every query to the fixture
@@ -168,9 +191,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--directory', type=Path, required=True)
     parser.add_argument('--domain', default='pki.example.com')
+    parser.add_argument('--additional-domain', action='append', default=[])
+    parser.add_argument('--denied-domain')
     parser.add_argument('--scenario', choices=SCENARIOS, required=True)
     args = parser.parse_args()
-    prepare(args.directory, args.domain, args.scenario)
+    prepare(args.directory, args.domain, args.scenario, args.additional_domain, args.denied_domain)
 
 
 if __name__ == '__main__':

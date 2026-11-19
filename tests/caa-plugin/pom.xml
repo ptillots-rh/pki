@@ -64,7 +64,7 @@
                     <systemPropertyVariables>
                         <caa.test.dnssec>${caa.test.dnssec}</caa.test.dnssec>
                         <caa.fixture.directory>${project.build.directory}/fixtures</caa.fixture.directory>
-                        <caa.fixture.generator>${project.build.testOutputDirectory}/dnssec-fixture.py</caa.fixture.generator>
+                        <caa.fixture.generator>${project.build.testOutputDirectory}/dnssec_fixture.py</caa.fixture.generator>
                     </systemPropertyVariables>
                 </configuration>
             </plugin>

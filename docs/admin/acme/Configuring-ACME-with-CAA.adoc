@@ -1,0 +1,222 @@
+:_mod-docs-content-type: PROCEDURE
+
+[id="configuring-acme-caa"]
+= Configuring ACME CAA Checking
+
+== Overview
+
+Certification Authority Authorization (CAA) records specify which certificate
+authorities a domain owner permits to issue certificates for a DNS name.
+The ACME responder checks CAA after validating the certificate signing request
+(CSR) and before submitting it to the configured issuer.
+Every DNS name in the request must pass, including wildcard names.
+A policy denial or DNS failure blocks submission and invalidates the order.
+
+CAA checking is disabled by default.
+It is configured separately from the domain-control challenges in `validators.conf`.
+The `caaIdentities` metadata advertised to ACME clients does not enable checking
+or configure the issuer identifiers accepted by the CAA policy engine.
+
+== Prerequisites
+
+* Install ACME with the optional dnsjava CAA adapter and its runtime dependencies.
+  Default PKI builds omit this adapter.
+* Configure the issuer identifiers that represent the signing CA in its
+  Certification Practice Statement (CPS).
+* Provide a trusted DNSSEC-validating resolver reachable over TCP on a numeric
+  loopback address in the ACME responder's network namespace.
+  Unbound is the initial resolver target.
+* Configure the public ACME `baseURL` in `engine.conf`.
+  Account binding uses this trusted origin to identify the requesting account.
+
+For builds that supply the adapter, enable `--with-acme-dnsjava` when building
+PKI RPMs.
+The build host requires an installed package providing
+`mvn(dnsjava:dnsjava)` at a version accepted by the PKI RPM specification.
+Use an approved dependency build with the applicable security fixes.
+The deployment also requires the dependency package at runtime.
+Installing the dependency alone does not install the PKI adapter.
+
+== Preparing the DNSSEC Resolver
+
+The dnsjava adapter delegates DNSSEC validation to the configured resolver.
+The resolver must validate signatures, the chain of trust and signed denial
+of existence, and withhold answers when validation fails.
+The adapter does not perform signature validation itself.
+
+The resolver operator is responsible for:
+
+* Authenticated trust-anchor bootstrap, updates and rollover recovery.
+* Validation policy, including disabling permissive validation and preventing
+  exceptions that bypass DNSSEC for names covered by CAA checking.
+* Protecting the resolver listener, configuration and trust-anchor state.
+* Monitoring validation failures, outages and changes to effective configuration.
+
+A loopback address restricts the connection to the local network namespace;
+it does not authenticate the process listening at that address.
+A resolver in another container with its own network namespace is not reachable
+through the ACME container's loopback address.
+
+An AD-clear response does not establish that a domain is unsigned.
+The adapter accepts such a response under the trusted resolver's enforcement
+contract, which also permits answers for legitimately unsigned domains.
+Choosing a loopback endpoint alone does not establish that the resolver enforces
+DNSSEC.
+
+== Configuring the ACME Responder
+
+The configuration file is `/etc/pki/<instance>/acme/caa.conf` on the instance
+hosting ACME.
+For example, an instance named `pki-acme` uses
+`/etc/pki/pki-acme/acme/caa.conf`.
+The examples below use that instance name.
+
+Set the public ACME URL in `/etc/pki/pki-acme/acme/engine.conf`:
+
+[literal]
+....
+baseURL=https://acme.example.com:8443/acme
+....
+
+Create or edit `/etc/pki/pki-acme/acme/caa.conf`:
+
+[literal]
+....
+enabled=true
+issuerIdentifiers=ca.example.com
+dns.class=org.dogtagpki.acme.caa.dnsjava.DNSJavaCAAProvider
+dns.settings.server=127.0.0.1
+dns.settings.port=53
+....
+
+Replace `ca.example.com` with the issuer identifier published in the CA's CPS.
+It is the value a domain owner uses in an `issue` or `issuewild` CAA property;
+it need not match the ACME service hostname or the certificate's issuer DN.
+
+The following properties are supported:
+
+`enabled`::
+Set to `true` to enable CAA checking or `false` to disable it.
+The default is `false`.
+Values must be lowercase `true` or `false`.
+
+`issuerIdentifiers`::
+Required when checking is enabled.
+A comma-separated list of ASCII issuer domain names without a final root dot.
+Matching ignores case.
+All identifiers must represent the intended signing authority; they are not
+alternative signing CAs.
+
+`dns.class`::
+Required when checking is enabled.
+For the dnsjava adapter, use
+`org.dogtagpki.acme.caa.dnsjava.DNSJavaCAAProvider`.
+
+`dns.settings.server`::
+Required by the dnsjava adapter.
+A numeric loopback address, such as `127.0.0.1` or `::1`.
+Hostnames and non-loopback addresses are rejected.
+
+`dns.settings.port`::
+The resolver's TCP port, from `1` through `65535`.
+The default is `53`.
+
+The dnsjava provider accepts only `server` and `port` settings.
+Trust anchors are managed by the resolver and are not configured in `caa.conf`.
+Unknown configuration properties cause initialization to fail.
+Timeout, query, alias and concurrency limits are fixed implementation limits.
+
+Protect the configuration files with the ownership and permissions used for
+other ACME instance configuration files.
+Restart the instance after changing the CAA configuration:
+
+[literal]
+....
+$ systemctl restart pki-tomcatd@pki-acme
+....
+
+== Verifying Enforcement
+
+Before relying on the configuration, verify the effective resolver policy and
+exercise issuance with controlled DNS data:
+
+* A signed CAA grant for the configured issuer permits submission.
+* A CAA policy denying that issuer blocks submission.
+* Corrupted signed data blocks submission because DNSSEC validation fails.
+* An unsigned domain with an authenticated insecure delegation remains usable.
+* Resolver unavailability blocks submission.
+* Unsatisfied `accounturi` or `validationmethods` restrictions block submission
+  when no other applicable grant authorizes the request.
+
+Check the ACME service logs for initialization and CAA evaluation failures.
+An enabled configuration with a missing adapter, invalid settings or another
+initialization failure prevents successful ACME initialization.
+During finalization, policy denials use the ACME `caa` problem type, and DNS
+lookup or validation failures use the `dns` problem type.
+
+== Reading CAA Logs
+
+At INFO level, startup reports whether checking is enabled. An enabled instance
+also reports the configured provider, issuer identifiers and resolver endpoint.
+`provider-default` means an optional setting was omitted; the provider determines
+its value. Provider settings other than these named fields are omitted.
+
+Each finalization attempt uses its order ID to connect these messages:
+
+* A name decision records the DNS identity, wildcard status, successful challenge
+  method, evaluation, reason, policy owner and decision lifetime.
+* DNS observations record the resolver, question, transport, DNSSEC status and
+  response time. `rcode` and `ede` retain numeric values; `rcodeName` and `edeName`
+  name recognized codes. `UNKNOWN` preserves the numeric value for diagnosis.
+* `submission=permitted` appears only after the gate accepts the decision.
+  `submission=blocked` reports a gate rejection or a context-construction failure.
+  Permission to submit does not establish that the CA issued a certificate.
+
+`ACCOUNT_NOT_AUTHORIZED` and `VALIDATION_METHOD_NOT_AUTHORIZED` distinguish
+binding mismatches from an issuer mismatch. A denial reason summarizes failed
+grants; another applicable grant can still authorize issuance.
+`MISSING_BINDING_CONTEXT` means a restricted grant lacked usable account or
+method facts. `contextFailure=MISSING_AUTHORIZATION` means ACME could not
+establish current account-owned authorization before DNS evaluation.
+Other context failures use `INVALID_CONTEXT` with an exception type.
+
+For DNSSEC failures, for example, `rcode=2 rcodeName=SERVFAIL` with
+`ede=6 edeName=DNSSEC_BOGUS` explains the resolver observation. The separate
+`dnsFailure=VALIDATION_FAILURE` decision blocks submission.
+`dnssec=UNCLASSIFIED` alone does not establish that a domain is unsigned.
+CAA messages omit account URIs, raw CAA values and resolver diagnostic text.
+
+== Disabling CAA Checking
+
+To disable checking, set the following property and restart the instance:
+
+[literal]
+....
+enabled=false
+....
+
+For compatibility with existing installations, a missing `caa.conf` file or
+an absent `enabled` property also disables checking.
+Deployments requiring enforcement must detect disabled checking and
+configuration drift.
+
+== Deployment Scope
+
+This configuration applies to ACME issuance.
+It does not add CAA checking to direct CA enrollment, EST, CMC, manual approval
+or other enrollment paths.
+For a deployment relying on ACME as its CAA enforcement point, CA authorization,
+profiles and network controls must restrict covered certificates to that route.
+Profiles must preserve the checked DNS names and wildcard status, and signing
+delays must not outlive the accepted CAA decision.
+
+DNSSEC validation for CAA does not establish DNSSEC validation for the separate
+domain-control challenges or provide multi-perspective validation.
+Enabling this feature alone does not establish public-TLS compliance.
+
+== References
+
+* link:https://www.rfc-editor.org/rfc/rfc8659.html[RFC 8659: CAA]
+* link:https://www.rfc-editor.org/rfc/rfc8657.html[RFC 8657: Account and Method Binding]
+* xref:Configuring-ACME-with-PKI-Issuer.adoc[Configuring ACME with PKI Issuer]
+* xref:Configuring-ACME-Metadata.adoc[Configuring ACME Metadata]

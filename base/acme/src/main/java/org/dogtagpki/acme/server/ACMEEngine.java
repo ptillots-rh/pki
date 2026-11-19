@@ -8,6 +8,7 @@ package org.dogtagpki.acme.server;
 import java.io.File;
 import java.io.FileReader;
 import java.math.BigInteger;
+import java.net.URI;
 import java.net.URL;
 import java.security.AlgorithmParameters;
 import java.security.KeyFactory;
@@ -40,6 +41,7 @@ import org.apache.commons.codec.binary.Base64;
 import org.apache.commons.lang3.NotImplementedException;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.http.client.utils.URIBuilder;
 import org.dogtagpki.acme.ACMEAccount;
 import org.dogtagpki.acme.ACMEAuthorization;
 import org.dogtagpki.acme.ACMEError;
@@ -102,6 +104,7 @@ public class ACMEEngine extends CMSEngine {
 
     private ACMEIssuerConfig issuerConfig;
     private ACMEIssuer issuer;
+    private ACMECAAValidator caaValidator;
 
     private ACMEScheduler scheduler;
 
@@ -191,6 +194,64 @@ public class ACMEEngine extends CMSEngine {
 
     public URL getBaseURL() {
         return config.getBaseURL();
+    }
+
+    /**
+     * Builds the account URI shared by registration and CAA account binding.
+     * Both callers must identify the account using the same public URL, including
+     * when a reverse proxy exposes a different origin from the internal listener.
+     *
+     * Origin selection:
+     * - Configured baseURL takes precedence over the supplied request URI.
+     * - Registration may use requestURI when baseURL is absent, preserving
+     *   existing deployments that have no configured public origin.
+     * - CAA passes null for requestURI. Account binding therefore requires
+     *   configured server identity and cannot inherit a caller-supplied origin.
+     *
+     * Path construction:
+     * - Use the deployed webapp ID, followed by /acct/ and the account ID.
+     * - ROOT means the webapp has no context prefix.
+     * - Replace any baseURL path and remove query and fragment components.
+     *
+     * Example: baseURL=https://acme.example/ignored and webapp ID acme produce
+     *   https://acme.example/acme/acct/account-1
+     *
+     * Missing origin or webapp identity, non-HTTP(S) origins, missing host names
+     * and embedded user information are rejected before constructing the URI.
+     */
+    public URI getAccountURI(URI requestURI, String accountID) throws Exception {
+        URI base = getBaseURL() == null ? requestURI : getBaseURL().toURI();
+
+        if (base == null) {
+            throw new IllegalStateException("CAA account binding requires baseURL in engine.conf");
+        }
+
+        validateAccountOrigin(base);
+
+        // Like the directory servlet, take the origin from baseURL and the
+        // context path from the deployed webapp, not from baseURL's path.
+        if (getID() == null) {
+            throw new IllegalStateException("ACME webapp context is not initialized");
+        }
+
+        String context = "ROOT".equals(getID()) ? "" : "/" + getID();
+        return new URIBuilder(base).removeQuery().setFragment(null)
+                .setPath(context + "/acct/" + accountID).build();
+    }
+
+    /**
+     * Validates an account URI's origin for registration and enabled CAA startup.
+     *
+     * - Require an HTTP(S) URI with a host and no embedded user information.
+     * - Leave path, query and fragment handling to getAccountURI().
+     * - Check only URI fields; this performs no DNS lookup or account access.
+     */
+    static void validateAccountOrigin(URI origin) {
+        if (origin.getHost() == null || origin.getUserInfo() != null
+                || !("https".equalsIgnoreCase(origin.getScheme())
+                        || "http".equalsIgnoreCase(origin.getScheme()))) {
+            throw new IllegalArgumentException("Invalid ACME account URL origin");
+        }
     }
 
     public void loadLoggingProperties(String loggingProperties) throws Exception {
@@ -489,6 +550,7 @@ public class ACMEEngine extends CMSEngine {
         initScheduler(acmeConfDir + File.separator + "scheduler.conf");
         initMonitors(acmeConfDir + File.separator + "configsources.conf");
         initRealm(acmeConfDir + File.separator + "realm.conf");
+        initCAA(acmeConfDir + File.separator + "caa.conf");
 
         logger.info("ACME engine started");
     }
@@ -545,6 +607,9 @@ public class ACMEEngine extends CMSEngine {
 
         logger.info("Stopping ACME engine");
 
+        // Close CAA admission before tearing down issuer and database resources.
+        shutdownCAA();
+
         shutdownRealm();
         shutdownMonitors();
         shutdownScheduler();
@@ -553,6 +618,52 @@ public class ACMEEngine extends CMSEngine {
         shutdownDatabase();
 
         logger.info("ACME engine stopped");
+    }
+
+    /**
+     * Initializes the engine's CAA adapter from administrator configuration.
+     * One adapter owns the configured gate and DNS client for this engine.
+     *
+     * - Initialize even when CAA is disabled. Disabled policy is an explicit
+     *   gate state, rather than an absent adapter that could hide startup errors.
+     * - Reject a second initialization instead of replacing an active gate or
+     *   opening another DNS client.
+     * - Assign the field only after construction succeeds. If construction
+     *   fails, finalization remains blocked by the missing-adapter check below.
+     *
+     * Configuration is loaded at startup; changes require an instance restart.
+     */
+    public void initCAA(String filename) throws Exception {
+        if (caaValidator != null) {
+            throw new IllegalStateException("ACME CAA validator is already initialized");
+        }
+
+        caaValidator = new ACMECAAValidator(this, filename);
+    }
+
+    /**
+     * Closes CAA resources while retaining the validator's closed state.
+     * Repeated shutdown is safe, and late requests cannot obtain a fresh gate.
+     */
+    public void shutdownCAA() {
+        // Retain the closed validator so late requests cannot bypass enforcement.
+        if (caaValidator != null) {
+            caaValidator.close();
+        }
+    }
+
+    /**
+     * Checks CAA after CSR validation and immediately before issuer submission.
+     * A missing initialized validator is an engine lifecycle error, including
+     * when policy would otherwise be disabled. CAA failures propagate to the
+     * servlet and prevent the issuer from receiving the CSR.
+     */
+    public void validateCAA(ACMEAccount account, ACMEOrder order, PKCS10 pkcs10) throws Exception {
+        if (caaValidator == null) {
+            throw new IllegalStateException("ACME CAA validator is not initialized");
+        }
+
+        caaValidator.validate(account, order, pkcs10);
     }
 
     public String randomAlphanumeric(int length) {

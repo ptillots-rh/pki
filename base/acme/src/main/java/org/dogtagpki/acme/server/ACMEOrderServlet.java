@@ -163,9 +163,15 @@ public class ACMEOrderServlet extends ACMEServlet {
         byte[] csrBytes = Utils.base64decode(csr);
         PKCS10 pkcs10 = new PKCS10(csrBytes);
 
+        // Establish the requested identities before any CAA lookup.
+        // Both checks must succeed before handing this CSR to the issuer.
         engine.validateCSR(account, order, pkcs10);
+        engine.validateCAA(account, order, pkcs10);
 
         ACMEIssuer issuer = engine.getIssuer();
+        // Delayed CA processing can outlive the CAA decision checked above.
+        // This path assumes timely synchronous issuance. Deferred signing needs
+        // revalidation or additional CA-side freshness enforcement.
         String certID = issuer.issueCertificate(pkcs10);
         logger.info("Certificate issued: " + certID);
 

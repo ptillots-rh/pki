@@ -330,12 +330,14 @@ jobs:
 
           # TODO: review permissions
           cat > expected_old << EOF
+          -rw-rw---- pkiuser pkiuser caa.conf
           -rw-rw---- pkiuser pkiuser database.conf
           -rw-rw---- pkiuser pkiuser issuer.conf
           -rw-rw---- pkiuser pkiuser realm.conf
           EOF
 
           cat > expected_new << EOF
+          -rw-rw---- pkiuser pkiuser caa.conf
           -rw-rw---- pkiuser pkiuser database.conf
           -rw-rw---- pkiuser pkiuser issuer.conf
           -rw-rw---- pkiuser pkiuser realm.conf

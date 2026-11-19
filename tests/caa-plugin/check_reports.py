@@ -19,6 +19,8 @@ SUITES = {
             'caa.CAAIssuanceGateTest',
             'caa.DefaultCAAValidatorTest',
             'caa.CAALookupBudgetTest',
+            'server.ACMEEngineCAATest',
+            'server.ACMEOrderServletCAATest',
         ],
         'base/acme/caa-plugins/dnsjava': ['caa.dnsjava.DNSJavaCAAProviderTest'],
     },

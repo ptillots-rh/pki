@@ -16,7 +16,7 @@ import unittest
 from unittest.mock import patch
 
 
-spec = importlib.util.spec_from_file_location('caa_reports', Path(__file__).with_name('check-reports.py'))
+spec = importlib.util.spec_from_file_location('caa_reports', Path(__file__).with_name('check_reports.py'))
 reports = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(reports)
 
